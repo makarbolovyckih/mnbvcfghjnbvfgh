@@ -1,0 +1,45 @@
+name: Build IPA
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: |
+          # Works whether the repo files sit at the root or one folder deeper
+          APP=$(find . -name PlayerApp.swift | head -1)
+          [ -n "$APP" ] || { echo "PlayerApp.swift not found"; find . -not -path './.git/*'; exit 1; }
+          SRC=$(dirname "$APP" | sed 's|^\./||')
+          PARENT=$(dirname "$SRC")
+          echo "Sources: $SRC  Parent: $PARENT"
+          if [ "$SRC" = "Player" ] && [ -f project.yml ] && [ -d PlayerWidget ] && [ -d Shared ]; then
+            xcodegen generate
+          else
+            SPEC=$(find . -name project.yml | head -1)
+            [ -n "$SPEC" ] || { echo "project.yml not found"; exit 1; }
+            rm -rf stage && mkdir stage
+            cp -R "$SRC" stage/Player
+            cp -R "$PARENT/PlayerWidget" stage/PlayerWidget
+            cp -R "$PARENT/Shared" stage/Shared
+            cp "$SPEC" stage/project.yml
+            xcodegen generate --spec stage/project.yml --project .
+          fi
+      - name: Build (unsigned)
+        run: |
+          xcodebuild -project Player.xcodeproj -scheme Player -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package IPA
+        run: |
+          mkdir Payload
+          cp -R build/Build/Products/Release-iphoneos/Player.app Payload/
+          zip -r Player.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Player-ipa
+          path: Player.ipa
